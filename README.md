@@ -1,116 +1,101 @@
-# Credit Risk – Probability of Default Model
+# Value-at-Risk & Volatility Analysis for a Bank-Stock Portfolio
 
-An end-to-end credit risk model that predicts the **probability of default (PD)** for a loan applicant, turns it into a **credit score and approve/decline decision**, explains every decision with **SHAP reason codes**, and serves it all through a **FastAPI** service packaged with **Docker**.
+Comparing three one-day Value-at-Risk (VaR) and Expected Shortfall (ES) models and testing which one a risk team could actually trust, using backtesting methods from the Basel framework.
 
-Built to mirror how retail credit models are developed and governed in banks: a transparent benchmark next to a challenger model, business constraints on the model, a cut-off chosen on cost rather than accuracy, and explanations that could support an adverse-action notice.
+## Business problem
 
-## Highlights
+Banks must estimate how much a trading portfolio could lose in one day, and regulators check whether those estimates hold up in practice. A model that under-predicts risk leaves the bank under-capitalised. A model that over-predicts ties up capital unnecessarily.
 
-| Area | What the project does |
-|---|---|
-| Data | German Credit dataset (UCI / OpenML `credit-g`): 1,000 applicants, 20 attributes, 30% defaults |
-| Fair lending | Drops `personal_status` (encodes sex) and `foreign_worker` (national-origin proxy) |
-| Models | Logistic regression benchmark vs XGBoost champion, both tuned with 5-fold stratified CV |
-| Business constraints | **Monotonic** XGBoost: risk can only rise with loan duration, amount and instalment burden |
-| Metrics | ROC AUC, **Gini**, **KS**, PR AUC, Brier score, calibration curve |
-| Decision cut-off | Minimises expected cost using the dataset's 5:1 cost matrix, chosen on out-of-fold training predictions so the test set stays untouched |
-| Credit score | Scorecard scaling: 600 points = 50:1 good/bad odds, 20 points to double the odds (PDO) |
-| Explainability | Exact TreeSHAP values; global importance, beeswarm, and a waterfall for a declined applicant |
-| Serving | FastAPI with `/predict`, `/explain` (top factors + reasons for decline), `/model-info`, `/health` |
-| Engineering | Input validation (Pydantic + known categories), pytest suite, Docker image that trains at build |
+This project asks: **which VaR model best captures the risk of an equity portfolio, especially during volatile periods?**
+
+## Data
+
+- Source: Yahoo Finance via `yfinance` (public, free to use)
+- Default portfolio: equal-weighted JPM, GS, BAC, MSFT, AAPL
+- Period: 5 Jan 2015 to 27 Oct 2026 (2,971 daily returns). The first 500 days form the initial estimation window, leaving **2,471 days** for backtesting
+- Prices are cached locally to `prices.csv` after the first download (not committed to the repo)
+
+## Methods
+
+| Model | Idea | Weakness |
+|---|---|---|
+| Historical simulation | Use the empirical distribution of the last 500 returns | Slow to react when volatility changes |
+| Parametric (Normal) | Assume returns are normally distributed | Underestimates fat tails |
+| GARCH(1,1) | Forecast time-varying volatility, then convert to VaR | Still assumes normal innovations |
+
+- Forecasts are **rolling and one-day-ahead**: the VaR for day *t* uses only data before day *t*, so there is no look-ahead bias.
+- GARCH is re-fitted every 21 trading days (about monthly) for speed.
+- Evaluated at **95% and 99%** confidence.
+
+### Backtesting
+
+- **Exceedance count:** how often the actual loss exceeded the VaR, compared with the expected rate
+- **Kupiec test:** is the exceedance *rate* correct? (p < 0.05 rejects the model)
+- **Christoffersen test:** are exceedances *clustered*? (p < 0.05 means the model reacts too slowly to volatility)
+- **Basel traffic-light zone:** defined for 99% VaR over the most recent 250 days (green / yellow / red)
+
+## Results
+
+### 99% confidence (2,471 backtest days)
+
+| Model | Expected exceedances | Actual exceedances | Exceedance rate | Kupiec p-value | Christoffersen p-value | Avg VaR | Avg ES | Basel zone (last 250 days) |
+|---|---|---|---|---|---|---|---|---|
+| Historical | 24.7 | 37 | 1.50% | 0.0206 | 0.0019 | 3.83% | 5.39% | green |
+| Parametric (Normal) | 24.7 | 58 | 2.35% | <0.0001 | <0.0001 | 3.25% | 3.74% | green |
+| GARCH(1,1) | 24.7 | 66 | 2.67% | <0.0001 | 0.3823 | 2.82% | 3.25% | yellow |
+
+### 95% confidence (2,471 backtest days)
+
+| Model | Expected exceedances | Actual exceedances | Exceedance rate | Kupiec p-value | Christoffersen p-value |
+|---|---|---|---|---|---|
+| Historical | 123.6 | 123 | 4.98% | 0.9595 | 0.0001 |
+| Parametric (Normal) | 123.6 | 110 | 4.45% | 0.2029 | <0.0001 |
+| GARCH(1,1) | 123.6 | 148 | 5.99% | 0.0284 | 0.0203 |
+
+Charts (generated into `results/`):
+
+![Returns and volatility](results/returns_and_volatility.png)
+![Historical VaR](results/var99_historical.png)
+![GARCH VaR](results/var99_garch11.png)
+
+### Key findings
+
+- **No model fully passes at 99%.** A well-calibrated 99% model should be breached about 25 times in 2,471 days. Historical simulation was closest (37 breaches) and only marginally rejected by the Kupiec test (p = 0.02). The Parametric (58) and GARCH (66) models were clearly rejected.
+- **The Normal assumption understates tail losses.** The Parametric model's average 99% Expected Shortfall was 3.7%, compared with 5.4% for Historical simulation, so it underestimates how bad the worst days are.
+- **GARCH reacts to changing volatility but still breaches too often.** It was the only model whose breaches were not clustered (Christoffersen p = 0.38), yet it had the most breaches. This suggests the weak point is the Normal-distribution assumption rather than the volatility forecast.
+- **At 95% confidence the picture changes.** Historical and Parametric matched the expected breach rate (Kupiec p = 0.96 and 0.20), but their breaches were clustered, meaning they were slow to respond in volatile periods.
+
+**Takeaway:** for this portfolio, a risk team should not rely on a Normal-distribution VaR at 99%. Historical simulation was the most reliable on breach count, and the results point towards a volatility model with fat-tailed errors as the natural next improvement.
+
+## How to run
+
+```bash
+conda env create -f environment.yml
+conda activate var-risk
+python var_analysis.py
+# optional: choose your own portfolio
+python var_analysis.py --tickers JPM GS BAC --start 2012-01-01 --window 500
+```
+
+Outputs are written to `results/`. Results will change slightly depending on the date you run it, because the data runs up to the present day.
 
 ## Project structure
 
 ```
-credit-risk-pd-model/
-├── credit_risk.py        # the whole pipeline: data, training, evaluation, SHAP, API, CLI
-├── tests/test_api.py     # API, validation, SHAP additivity and monotonicity tests
-├── data/                 # german_credit.csv is downloaded here on first run
-├── models/               # trained model (git-ignored, rebuilt by `train`)
-├── reports/
-│   ├── metrics.json
-│   ├── model_comparison.md
-│   └── figures/
-├── Dockerfile
-├── environment.yml       # conda environment (local development)
-└── requirements.txt      # pip requirements (Docker)
+var_analysis.py      # data, risk models, backtesting and plots
+environment.yml      # conda environment
+results/             # charts and backtest_summary.csv
+README.md
 ```
-
-## Quick start
-
-```bash
-conda env create -f environment.yml
-conda activate credit-risk
-
-python credit_risk.py train             # downloads data, trains, writes reports/
-python credit_risk.py predict --example # scores a sample applicant with reason codes
-pytest -q                               # runs the test suite
-python credit_risk.py serve             # API at http://127.0.0.1:8000/docs
-```
-
-## Using the API
-
-Interactive docs are at **http://127.0.0.1:8000/docs**. From the terminal:
-
-```bash
-curl -X POST http://127.0.0.1:8000/explain \
-  -H "Content-Type: application/json" \
-  -d '{
-    "checking_status": "no checking", "duration": 12, "credit_history": "existing paid",
-    "purpose": "radio/tv", "credit_amount": 2500, "savings_status": "<100",
-    "employment": "1<=X<4", "installment_commitment": 2, "other_parties": "none",
-    "residence_since": 2, "property_magnitude": "car", "age": 35,
-    "other_payment_plans": "none", "housing": "own", "existing_credits": 1,
-    "job": "skilled", "num_dependents": 1, "own_telephone": "none"
-  }'
-```
-
-The response contains the PD, credit score, risk band (A–E), decision, the five factors that moved the prediction most (in log-odds), and – for declines – the reasons for decline. `GET /model-info` lists every allowed category value and the test-set metrics.
-
-## Docker
-
-```bash
-docker build -t credit-risk-api .
-docker run -p 8000:8000 credit-risk-api
-```
-
-The model is trained during the image build, so the saved model always matches the library versions inside the container.
-
-## Results
-
-Full numbers for both models are in [`reports/model_comparison.md`](reports/model_comparison.md) and [`reports/metrics.json`](reports/metrics.json) after running `train`.
-
-| ROC curve | Calibration |
-|---|---|
-| ![ROC](reports/figures/roc_curve.png) | ![Calibration](reports/figures/calibration.png) |
-
-| Cost-based cut-off | Score distribution |
-|---|---|
-| ![Cost](reports/figures/cost_vs_threshold.png) | ![Scores](reports/figures/score_distribution.png) |
-
-### Explainability
-
-| What drives risk overall | Why one applicant was declined |
-|---|---|
-| ![SHAP beeswarm](reports/figures/shap_beeswarm.png) | ![SHAP waterfall](reports/figures/shap_waterfall_declined.png) |
-
-## Methodology notes
-
-**Why Gini and KS?** They are the standard discrimination measures in retail credit risk. Gini = 2 × AUC − 1; KS is the largest gap between the cumulative distributions of good and bad borrowers.
-
-**Why a cost-based cut-off?** Approving a borrower who defaults costs far more than turning away one who would repay. With a 5:1 cost ratio, a 0.5 cut-off is the wrong choice; the code searches cut-offs on out-of-fold predictions and keeps the one with the lowest expected cost.
-
-**Why monotonic constraints?** A model where a longer or larger loan *lowers* predicted risk is hard to defend to model validators and regulators, even if it fits the training data. The constraints rule that out, and a test checks it.
-
-**Why SHAP from XGBoost directly?** `pred_contribs=True` gives exact TreeSHAP values in log-odds. One-hot columns are summed back to their original field, so each applicant gets one contribution per input – the shape reason codes need – and base value + contributions reproduce the model's prediction exactly (also tested).
 
 ## Limitations and next steps
 
-- 1,000 applicants is small; results carry wide confidence intervals. The same pipeline would run on a larger book such as Home Credit or Lending Club data.
-- Out-of-time validation and population stability (PSI) monitoring would be required before real use.
-- Age is kept as a feature; in a production model its use would need legal review.
-- Probability calibration (isotonic or Platt) could be added if PDs feed capital or provisioning (IFRS 9) calculations.
+- Fixed equal weights, with no transaction costs or rebalancing effects
+- GARCH uses normal innovations; a Student-t distribution would better capture fat tails
+- Single portfolio and a single time period
+- The Basel zone only looks at the last 250 days, so it says little about the full period
+- Next steps: GARCH with Student-t errors, filtered historical simulation, stress testing on 2008 and 2020, a Monte Carlo VaR model
 
-## Data source
+## Disclaimer
 
-Hofmann, H. (1994). *Statlog (German Credit Data)*. UCI Machine Learning Repository. https://doi.org/10.24432/C5NC77 – licensed CC BY 4.0.
+Educational project using public market data. Not investment advice.
