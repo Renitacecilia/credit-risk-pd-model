@@ -1,0 +1,9 @@
+.git
+__pycache__/
+*.pyc
+.pytest_cache/
+models/*.joblib
+reports/
+tests/
+*.zip
+.DS_Store

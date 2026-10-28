@@ -1,0 +1,96 @@
+{
+  "data": {
+    "rows": 1000,
+    "default_rate": 0.3,
+    "missing_values": 0,
+    "duplicate_rows": 0,
+    "excluded_features": [
+      "personal_status",
+      "foreign_worker"
+    ]
+  },
+  "split": {
+    "train": 800,
+    "test": 200,
+    "cv_folds": 5
+  },
+  "costs": {
+    "false_negative": 5.0,
+    "false_positive": 1.0
+  },
+  "champion_model": "xgboost",
+  "models": {
+    "logistic_regression": {
+      "best_params": {
+        "C": 0.03
+      },
+      "cv_roc_auc": 0.775,
+      "test": {
+        "roc_auc": 0.807,
+        "gini": 0.614,
+        "ks": 0.569,
+        "pr_auc": 0.6638,
+        "brier": 0.1609,
+        "log_loss": 0.4945
+      },
+      "decision_at_cost_optimal_threshold": {
+        "threshold": 0.21,
+        "approval_rate": 0.305,
+        "bad_rate_in_approved": 0.1311,
+        "defaults_caught_recall": 0.8667,
+        "precision_of_declines": 0.3741,
+        "confusion_matrix": {
+          "tn": 53,
+          "fp": 87,
+          "fn": 8,
+          "tp": 52
+        },
+        "expected_cost_per_applicant": 0.635,
+        "cost_if_approve_everyone": 1.5
+      }
+    },
+    "xgboost": {
+      "best_params": {
+        "subsample": 0.8,
+        "reg_lambda": 20,
+        "n_estimators": 150,
+        "min_child_weight": 1,
+        "max_depth": 4,
+        "learning_rate": 0.1,
+        "gamma": 0.5,
+        "colsample_bytree": 0.5
+      },
+      "cv_roc_auc": 0.7849,
+      "test": {
+        "roc_auc": 0.803,
+        "gini": 0.606,
+        "ks": 0.5286,
+        "pr_auc": 0.661,
+        "brier": 0.1564,
+        "log_loss": 0.4772
+      },
+      "decision_at_cost_optimal_threshold": {
+        "threshold": 0.17,
+        "approval_rate": 0.375,
+        "bad_rate_in_approved": 0.0933,
+        "defaults_caught_recall": 0.8833,
+        "precision_of_declines": 0.424,
+        "confusion_matrix": {
+          "tn": 68,
+          "fp": 72,
+          "fn": 7,
+          "tp": 53
+        },
+        "expected_cost_per_applicant": 0.535,
+        "cost_if_approve_everyone": 1.5
+      }
+    }
+  },
+  "environment": {
+    "python": "3.11.18",
+    "scikit-learn": "1.9.1",
+    "xgboost": "3.4.2",
+    "pandas": "3.1.0",
+    "numpy": "2.4.6"
+  }
+}
